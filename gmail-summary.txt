@@ -1,0 +1,115 @@
+================================================================================
+SUMMARY (plain text) — source: gmail.txt
+AI-Powered Automated QA Platform — Feasibility, Architecture & MVP Estimates
+================================================================================
+
+OVERVIEW
+--------
+Video plus vision, LLM script generation, and browser automation (e.g. Playwright)
+are sufficient to build an end-to-end platform: from uploaded walkthrough videos
+to generated tests, execution, bug detection, and integrations such as Jira,
+GitHub, and RFT (Ready for Testing) webhooks.
+
+FEASIBILITY
+-----------
+Verdict:  Highly feasible with today's models and tooling.
+Strengths: Vision interprets UI; LLMs output executable tests; Playwright runs
+            them; webhooks connect issue status to test runs.
+Challenges: Scale and compute for video; script quality from prompts/validation;
+            dynamic UIs; false positives; human-in-the-loop where needed.
+
+ARCHITECTURE
+------------
+Data path:  Video → key frames → UI and actions → Playwright script → run → report
+
+Layers (top to bottom):
+  1. User interface: video upload, dashboard, bug reports, test history
+  2. Video processing: frame extract, UI detection, action recognition, flow graph
+  3. AI test generation: multimodal LLM, script and assertion generation, suite compile
+  4. Test execution: browser orchestration, runner, screenshot compare, result analysis
+  5. Bug detection: visual regression, anomalies, classification, issue creation
+  6. Integrations: Jira, GitHub, Slack, webhooks
+
+COMPONENTS
+----------
+Video pipeline:  FFmpeg/OpenCV for frames; YOLO/DINO/Florence-style UI detect; action
+                  sequence; optional flow graph for the LLM.
+AI test gen:     Multimodal model for context; code LLM for Playwright/Cypress;
+                  hybrid assertions; templates for suites.
+Execution:        Playwright, parallel runners, optional K8s or browser cloud,
+                  screenshot/result aggregation.
+Bug detection:   Visual, functional, performance, a11y, console; structured reports
+                 for external tools.
+RFT automation:  Issue status webhook → map issue to test IDs → selective run →
+                 comment/transition on the issue.
+
+AI PIPELINE STAGES
+------------------
+  1. Video to frames, UI map, and action sequence
+  2. Optional embeddings to match past patterns
+  3. LLM generates tests with RAG from examples
+  4. Validate: syntax, dry run, edge cases
+
+TECHNOLOGY STACK
+----------------
+Backend:   Fastify or FastAPI, BullMQ or Celery, REST
+Data:      PostgreSQL, pgvector, Redis, S3 or blob storage, optional search
+          (Elasticsearch, Meilisearch)
+AI:        LiteLLM, OpenRouter, or Vercel AI SDK for multi-provider calls
+Browsers:  Playwright; optional Browserbase or BrowserStack
+Frontend:  Next.js, shadcn, Tailwind, SWR or Zustand, websockets for live runs
+
+DATA MODEL (ENTITIES)
+----------------------
+projects:            name, base_url, timestamps
+video_uploads:        project, url, status, metadata
+tests:               script_content, ui_flow, tags, link to video
+test_runs:           status, result, screenshots, trigger (manual, rft, scheduled), issue_id
+bugs:                link to run, severity, type, external issue
+issue_test_mapping:  external_issue_id to test_id for RFT
+
+USER FLOWS
+----------
+videoToTest:  upload → keyframes → vision and actions → LLM script and validation
+              → persist
+runToBugs:   trigger run → browser execution → evidence → classify → Jira/GitHub
+              and dashboard
+rft:         RFT on issue → webhook → map tests → run on env → post results
+
+TIME AND COST
+-------------
+End-to-end:  ~2–3 min for short video; a few to ~10+ min for long videos depending
+             on pipeline and parallelism.
+Per video:   Order of ~$1 using premium vision path (illustrative); order of
+             ~$0.08 with budget model path — verify current API pricing.
+Monthly MVP: Roughly $5–10 for light demo; $300–350 small team; $700–1000+ heavier
+             multi-user (AI plus infra plus browser minutes).
+
+IMPLEMENTATION PHASES
+----------------------
+Phase 1:  MVP: upload, frames, basic UI detection, simple generated tests, manual
+          execution, dashboard
+Phase 2:  Richer actions/assertions, parallel runs, visual regression, Jira
+Phase 3:  RFT webhooks, issue mapping, auto bugs, notifications, scheduling
+Phase 4:  Self-heal, flaky test handling, coverage, custom models (ongoing)
+
+RISKS
+-----
+Brittle selectors (multi-strategy locators); dynamic UIs (waits); test auth; flakes
+and false positives; scale (queues, K8s, cloud browsers).
+
+REFERENCE VENDORS
+-----------------
+Testim, Mabl, Functionize, Katalon, Applitools — this design differentiates on
+video-first generation for non-technical users.
+
+CONCLUSION
+----------
+Success depends on a strong video-to-structure pipeline, clear LLM contracts for
+generated code, a reliable runner (timeouts, retries, idempotency), and solid
+integrations for RFT and issue tracking, scaling from a narrow MVP to automation
+and self-heal.
+
+================================================================================
+End of summary
+================================================================================

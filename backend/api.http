@@ -1,0 +1,149 @@
+# REST Client (VS Code: humao.rest-client) / IntelliJ HTTP Client
+# 1) Start: uvicorn app.main:app --reload --port 8000
+# 2) Run "Get Google OAuth URL", open `url` in a browser, complete sign-in
+# 3) Copy `user_id` from the callback JSON into @userId below
+# 4) Run "List emails", copy a message `id` into @messageId
+# 5) Run "Generate mock draft", copy `id` into @draftId, then approve and send
+
+@baseUrl = http://127.0.0.1:8000
+@api = {{baseUrl}}/api/v1
+@userId = 72bb2df1-e9bb-4d6f-82b1-2b5deec74cca
+@messageId = GMAIL_MESSAGE_ID
+@draftId = DRAFT_UUID
+@idempotencyKey = 00000000-0000-0000-0000-000000000001
+
+### Root (links)
+GET {{baseUrl}}/
+Accept: application/json
+
+### Health
+GET {{api}}/health
+Accept: application/json
+
+### Google OAuth — get authorization URL (open `url` in browser)
+# @name oauthUrl
+GET {{api}}/auth/google
+Accept: application/json
+
+### Google OAuth — callback (browser hits this; usually you do NOT call manually)
+# If testing manually, you need real `code` and `state` from Google redirect
+# @name oauthCallback
+# GET {{api}}/auth/google/callback?code=PASTE_CODE&state=PASTE_STATE
+# Accept: application/json
+
+### Auth — Gmail token health
+GET {{api}}/auth/gmail/health
+X-User-Id: {{userId}}
+Accept: application/json
+
+### Auth — revoke (logout + clear local tokens)
+POST {{api}}/auth/revoke
+X-User-Id: {{userId}}
+Accept: application/json
+
+### Emails — list (unread | recent | all)
+GET {{api}}/emails?filter=unread&max_results=20
+X-User-Id: {{userId}}
+Accept: application/json
+
+### Emails — list recent
+GET {{api}}/emails?filter=recent&max_results=10
+X-User-Id: {{userId}}
+Accept: application/json
+
+### Emails — get one message
+GET {{api}}/emails/{{messageId}}
+X-User-Id: {{userId}}
+Accept: application/json
+
+### Preferences — get
+GET {{api}}/preferences
+X-User-Id: {{userId}}
+Accept: application/json
+
+### Preferences — update (encrypted at rest)
+PUT {{api}}/preferences
+Content-Type: application/json
+X-User-Id: {{userId}}
+
+{
+  "default_tone": "concise",
+  "email_signature": "— You\n",
+  "other": null
+}
+
+### Drafts — generate (mock LLM)
+POST {{api}}/drafts/generate
+Content-Type: application/json
+X-User-Id: {{userId}}
+
+{
+  "source_message_id": "{{messageId}}",
+  "tone": "concise",
+  "custom_instructions": null
+}
+
+### Drafts — list
+GET {{api}}/drafts?limit=50
+X-User-Id: {{userId}}
+Accept: application/json
+
+### Drafts — list pending_review only
+GET {{api}}/drafts?status=pending_review&limit=20
+X-User-Id: {{userId}}
+Accept: application/json
+
+### Drafts — get one
+GET {{api}}/drafts/{{draftId}}
+X-User-Id: {{userId}}
+Accept: application/json
+
+### Drafts — edit body (only pending_review)
+PATCH {{api}}/drafts/{{draftId}}
+Content-Type: application/json
+X-User-Id: {{userId}}
+
+{
+  "body": "Updated mock reply text.",
+  "subject": null
+}
+
+### Drafts — approve
+POST {{api}}/drafts/{{draftId}}/approve
+X-User-Id: {{userId}}
+Accept: application/json
+
+### Drafts — reject
+# POST {{api}}/drafts/{{draftId}}/reject
+# X-User-Id: {{userId}}
+# Accept: application/json
+
+### Replies — send approved draft (idempotent)
+POST {{api}}/replies/send
+Content-Type: application/json
+X-User-Id: {{userId}}
+Idempotency-Key: {{idempotencyKey}}
+
+{
+  "draft_id": "{{draftId}}"
+}
+
+### Replies — send (same idempotency key = same result, no duplicate send)
+# POST {{api}}/replies/send
+# Content-Type: application/json
+# X-User-Id: {{userId}}
+# Idempotency-Key: {{idempotencyKey}}
+#
+# {
+#   "draft_id": "{{draftId}}"
+# }
+
+### Audit logs
+GET {{api}}/logs/audit?limit=50
+X-User-Id: {{userId}}
+Accept: application/json
+
+### Audit logs — filter by event
+# GET {{api}}/logs/audit?event=draft.created&limit=20
+# X-User-Id: {{userId}}
+# Accept: application/json

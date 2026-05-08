@@ -1,0 +1,428 @@
+================================================================================
+  AI-POWERED AUTOMATED QA PLATFORM
+  Feasibility, Architecture & MVP Estimates
+================================================================================
+
+This platform is absolutely possible to build. Video + vision + LLM + browser
+automation is an emerging pattern in QA. Below: feasibility, a clear
+architecture, components, data model, flows, and cost/timeline.
+
+--------------------------------------------------------------------------------
+1. FEASIBILITY ASSESSMENT
+--------------------------------------------------------------------------------
+
+  Verdict: HIGHLY FEASIBLE
+
+  - Vision models can interpret UI from video/screenshots.
+  - LLMs can turn that into test scripts.
+  - Playwright/Puppeteer can run those scripts.
+  - Webhooks can tie tests to Jira/GitHub status (e.g. RFT).
+
+  Challenges to plan for
+
+  - Video at scale = heavy compute; budget GPU/async queues.
+  - Script quality = model + prompt + validation loop.
+  - Dynamic apps need waits, state, and fewer brittle selectors.
+  - False positives need human review or confidence gates.
+
+--------------------------------------------------------------------------------
+2. HIGH-LEVEL ARCHITECTURE
+--------------------------------------------------------------------------------
+
+  (Read top → bottom. Each layer calls the one below.)
+
+  LAYER 1 – USER INTERFACE
+  ┌──────────────────┬──────────────────┬──────────────────┬──────────────────┐
+  │  Video upload    │   Dashboard      │   Bug reports   │  Test history    │
+  └──────────────────┴──────────────────┴──────────────────┴──────────────────┘
+            │
+            ▼
+  LAYER 2 – VIDEO PROCESSING
+  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+  │ Frame        │ -> │ UI element   │ -> │ Action        │ -> │ Flow graph  │
+  │ extract      │    │ detection    │    │ recognition  │    │ (journey)   │
+  └──────────────┘    └──────────────┘    └──────────────┘    └──────────────┘
+            │
+            ▼
+  LAYER 3 – AI TEST GENERATION
+  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+  │ Multimodal   │ -> │ Script        │ -> │ Assertions   │ -> │ Test suite   │
+  │ LLM          │    │ generator     │    │              │    │ (compile)    │
+  └──────────────┘    └──────────────┘    └──────────────┘    └──────────────┘
+            │
+            ▼
+  LAYER 4 – TEST EXECUTION
+  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+  │ Browser      │ -> │ Test runner  │ -> │ Screenshot   │ -> │ Result        │
+  │ orchestrator │    │              │    │ compare      │    │ analysis      │
+  └──────────────┘    └──────────────┘    └──────────────┘    └──────────────┘
+            │
+            ▼
+  LAYER 5 – BUG DETECTION
+  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+  │ Visual        │ -> │ Functional   │ -> │ Bug          │ -> │ Issue        │
+  │ regression    │    │ anomalies    │    │ classifier   │    │ (create)     │
+  └──────────────┘    └──────────────┘    └──────────────┘    └──────────────┘
+            │
+            ▼
+  LAYER 6 – INTEGRATIONS
+  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+  │ Jira         │    │ GitHub        │    │ Slack /       │    │ Webhooks     │
+  └──────────────┘    └──────────────┘    └──────────────┘    └──────────────┘
+
+  One-line data path (video → value):
+
+    Video  →  key frames  →  UI + actions  →  Playwright script  →  run  →  report
+
+  (Optional) MERMAID — same architecture for tools that render diagrams:
+
+```mermaid
+flowchart TB
+  subgraph UI["1. User interface"]
+    A[Video upload] --- B[Dashboard] --- C[Bug reports] --- D[Test history]
+  end
+  subgraph VP["2. Video processing"]
+    E[Frame extract] --> F[UI detection] --> G[Action recognition] --> H[Flow graph]
+  end
+  subgraph AI["3. AI test generation"]
+    I[Multimodal LLM] --> J[Script gen] --> K[Assertions] --> L[Test suite]
+  end
+  subgraph EX["4. Test execution"]
+    M[Browser orchestrator] --> N[Runner] --> O[Screenshot compare] --> P[Result analysis]
+  end
+  subgraph BD["5. Bug detection"]
+    Q[Visual regression] --> R[Anomalies] --> S[Classifier] --> T[Issue creator]
+  end
+  subgraph IN["6. Integrations"]
+    U[Jira] --- V[GitHub] --- W[Slack] --- X[Webhooks]
+  end
+  UI --> VP --> AI --> EX --> BD --> IN
+```
+
+--------------------------------------------------------------------------------
+3. COMPONENT BREAKDOWN
+--------------------------------------------------------------------------------
+
+3.1 Video processing pipeline
+  Purpose: Turn an app walkthrough video into structure the AI can use.
+
+  Component            | What it does                          | Example tech
+  --------------------|---------------------------------------|------------------
+  Frame extract       | Key frames; scene change detection    | FFmpeg, OpenCV
+  UI element detect   | Buttons, inputs, links, forms         | YOLO, DINO, Florence-2
+  Action recognize    | Click, type, scroll, nav              | Temporal model + rules
+  Flow graph           | User journey as graph                 | GNN or LLM-structured
+
+  Simple linear flow (no wide box drawing):
+
+    VIDEO
+      |
+      v
+    Keyframes  (e.g. 1–2 fps)
+      |
+      v
+    Per frame: UI elements + bboxes/labels
+      |
+      v
+    Between frames: action sequence
+      |
+      v
+    Flow graph / ordered steps  --->  to LLM
+
+3.2 AI test generation engine
+  Purpose: From UI understanding → runnable tests.
+
+  Stage              | Role                                    | Models / approach
+  ------------------|-----------------------------------------|------------------------
+  Multimodal core   | Intent + context from UI + text         | GPT-4o, Claude, Gemini
+  Script generator  | Playwright / Cypress                    | Code-capable LLM
+  Assertion gen     | Checkpoints                             | LLM + rules
+  Suite compiler   | Group, tag, parametrize                 | Templates + LLM
+
+  LLM input bundle (typical):
+    - Frames or frame + UI annotations
+    - Action list
+    - Locators: CSS, XPath, ARIA, visible text
+    - App domain (e.g. e-commerce, admin)
+
+  LLM output (typical):
+    - Test file(s)
+    - Variations / data-driven cases
+    - Optional edge cases
+
+3.3 Test execution engine
+  Purpose: Run generated tests on real URLs; collect evidence.
+
+  Piece               | Notes
+  --------------------|------------------------------------------------
+  Browser orchestrator | Playwright; scale with containers or Browserbase
+  Test runner         | Parallel suites; Jest/Playwright Test
+  Screenshot compare  | Pixelmatch, Percy-style, or custom
+  Result analyzer     | Parse + optional LLM summary
+
+  Execution (logical):
+
+    +------------------+
+    |  K8s or VM pool  |
+    |  +----+ +----+   |
+    |  |B1  | |B2  |...|
+    +--------+--------+
+             |
+             v
+    +------------------+
+    | Result aggregator |
+    +------------------+
+
+3.4 Bug detection & reporting
+  Bug type           | How you detect it
+  -------------------|------------------------------------------
+  Visual regression  | Baseline vs current pixels
+  Functional         | Failed assertions, thrown errors
+  Performance        | Time thresholds, CWV
+  A11y               | axe-core
+  Console            | Captured console errors in run
+
+  AI bug report fields (suggested):
+    - Title, steps, expected/actual, screenshots, env, severity, links
+
+3.5 RFT (Ready for testing) automation
+  When an issue moves to RFT, re-run the right tests and post back.
+
+  Flow (left to right, then down):
+
+    [ Jira / GitHub status change ]
+              |
+              v
+        [ Webhook receiver ]
+              |
+              v
+        [ Map issue ID -> test IDs ]
+              |
+              v
+        [ Run those tests (selective) ]
+              |
+              v
+        [ Comment on issue + pass/fail + links ]
+
+  Mapping idea:
+    - Tag tests with feature / module
+    - Store issue_id <-> test_id in DB
+    - RFT event -> lookup -> run -> update issue
+
+--------------------------------------------------------------------------------
+4. AI / ML PROCESSING PIPELINE (STAGES)
+--------------------------------------------------------------------------------
+
+    +-------------------------------------------------------------+
+    | STAGE 1: Video  ->  frames + UI map + action sequence     |
+    |   (e.g. Gemini video OR GPT-4o per frame)                 |
+    +---------------------------+---------------------------------+
+                                v
+    +-------------------------------------------------------------+
+    | STAGE 2: Embeddings  ->  match similar past UI/test patterns  |
+    +---------------------------+---------------------------------+
+                                v
+    +-------------------------------------------------------------+
+    | STAGE 3: LLM  ->  Playwright/Cypress + RAG from examples  |
+    +---------------------------+---------------------------------+
+                                v
+    +-------------------------------------------------------------+
+    | STAGE 4: Validate  ->  syntax, dry run, add edge cases      |
+    +-------------------------------------------------------------+
+
+--------------------------------------------------------------------------------
+5. TECHNOLOGY STACK (SUMMARY)
+--------------------------------------------------------------------------------
+
+  Backend:        Fastify / FastAPI, BullMQ or Celery, REST
+  Data:          PostgreSQL + pgvector, Redis, S3/Blob, optional ES/Meilisearch
+  AI gateway:   Vercel AI SDK, LiteLLM, OpenRouter
+  Browsers:      Playwright, Browserbase/BrowserStack optional
+  Frontend:     Next.js, shadcn, Tailwind, SWR/Zustand, websockets for live runs
+
+--------------------------------------------------------------------------------
+6. DATABASE SCHEMA (CORE)
+--------------------------------------------------------------------------------
+
+  (PostgreSQL-style; adjust types as needed.)
+
+  -- Projects
+  CREATE TABLE projects (
+    id UUID PRIMARY KEY,
+    name TEXT NOT NULL,
+    base_url TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+  -- Video uploads
+  CREATE TABLE video_uploads (
+    id UUID PRIMARY KEY,
+    project_id UUID REFERENCES projects(id),
+    video_url TEXT NOT NULL,
+    status TEXT DEFAULT 'processing',  -- processing | analyzed | failed
+    metadata JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+  -- Generated tests
+  CREATE TABLE tests (
+    id UUID PRIMARY KEY,
+    project_id UUID REFERENCES projects(id),
+    video_id UUID REFERENCES video_uploads(id),
+    name TEXT NOT NULL,
+    description TEXT,
+    script_content TEXT NOT NULL,  -- e.g. Playwright
+    ui_flow JSONB,
+    tags TEXT[],
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+  -- Test runs
+  CREATE TABLE test_runs (
+    id UUID PRIMARY KEY,
+    test_id UUID REFERENCES tests(id),
+    status TEXT DEFAULT 'pending',  -- pending | running | passed | failed
+    target_url TEXT NOT NULL,
+    result JSONB,
+    screenshots TEXT[],
+    video_recording TEXT,
+    duration_ms INTEGER,
+    triggered_by TEXT,  -- manual | rft | scheduled
+    issue_id TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+  -- Bugs
+  CREATE TABLE bugs (
+    id UUID PRIMARY KEY,
+    test_run_id UUID REFERENCES test_runs(id),
+    title TEXT NOT NULL,
+    description TEXT,
+    severity TEXT,
+    type TEXT,  -- visual | functional | performance | a11y
+    screenshots TEXT[],
+    external_issue_id TEXT,
+    status TEXT DEFAULT 'open',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+  -- RFT: which tests apply to which external issue
+  CREATE TABLE issue_test_mapping (
+    id UUID PRIMARY KEY,
+    external_issue_id TEXT NOT NULL,
+    test_id UUID REFERENCES tests(id),
+    project_id UUID REFERENCES projects(id),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+--------------------------------------------------------------------------------
+7. END-TO-END USER FLOWS
+--------------------------------------------------------------------------------
+
+7.1 Video upload  ->  generated test
+  1. User uploads video
+  2. Extract keyframes
+  3. Vision: UI + locators per frame
+  4. Infer actions between frames
+  5. LLM: Playwright + waits + assertions
+  6. Validate (parse + optional dry run)
+  7. Save test in DB
+
+7.2 Test run  ->  bugs
+  1. Trigger manual / schedule / RFT
+  2. Launch browser, run script
+  3. Capture screenshots, console, network as needed
+  4. Compare and classify failures
+  5. Open/update Jira/GitHub + dashboard
+
+7.3 RFT automation
+  1. Issue -> RFT
+  2. Webhook hits your API
+  3. Resolve tests for issue, run on target env
+  4. Post comment with results; optional transition if all green
+
+--------------------------------------------------------------------------------
+8. MVP TIME & COST (FROM VIDEO TO BUG REPORT)
+--------------------------------------------------------------------------------
+
+8.1 Processing time (indicative)
+  Step                     | Time (rough)
+  -------------------------|------------------
+  Upload + store           | 5–30 s
+  Frame extract            | 10–30 s
+  UI detection (many frames)| 30–60 s
+  Action / LLM sequence     | 15–30 s
+  Script generation        | 20–40 s
+  Test execution            | 30–120 s
+  Bug / report              | 10–20 s
+
+  Total by video length (very rough):
+    30 s video  ->  ~2–3 min end-to-end
+    1 min      ->  ~3–4 min
+    2 min      ->  ~4–6 min
+    5 min      ->  ~8–12 min
+
+  Speed-ups: parallel frames, batch APIs, pattern cache, warm browsers.
+
+8.2 Cost per 2 min video (example)
+  (Premium path – GPT-4o style vision + generation)
+  Task                    | Approx
+  ------------------------|--------
+  Frame analysis          | major share of $~0.75 class
+  Action + script         | $~0.15 + $0.06 + tiny mini for report
+  **Ballpark total**      | **~$1 / video** (order of magnitude)
+
+  (Budget path – e.g. Gemini 2.0 Flash)
+  Ballpark **~$0.08 / video** for similar pipeline (prices change; verify current).
+
+8.3 Monthly MVP bands (illustrative)
+  Scenario            | Order of magnitude / month
+  --------------------|----------------------------
+  Personal demo (Gemini + free tiers) | $5–10
+  Small team, GPT-4o volume           | $300–350
+  Heavier (50+ users, mixed)         | $700–1000
+
+  Components: AI API, cloud, storage, browser minutes.
+
+--------------------------------------------------------------------------------
+9. IMPLEMENTATION PHASES
+--------------------------------------------------------------------------------
+
+  Phase 1 (MVP, weeks):  upload, frames, basic UI detect, simple scripts, manual run, dashboard
+  Phase 2:                better actions, assertions, parallel run, visual regression, Jira
+  Phase 3:                RFT webhooks, mapping, auto bugs, notifications, schedule
+  Phase 4:                self-heal, flaky detection, coverage, custom models (ongoing)
+
+--------------------------------------------------------------------------------
+10. RISKS & MITIGATIONS
+--------------------------------------------------------------------------------
+
+  Risk              | Mitigation
+  ------------------|------------------------------------------
+  Brittle selectors | Text, ARIA, multi-strategy locators, AI re-find
+  Dynamic UI        | Waits, polling, not fixed sleeps only
+  Auth in tests     | Secure secrets, session reuse
+  Flakes / FPs     | Scores, human review queue, baseline hygiene
+  Scale             | Queues, K8s, browser cloud
+
+--------------------------------------------------------------------------------
+11. COMPARABLE PRODUCTS (REFERENCE)
+--------------------------------------------------------------------------------
+
+  Testim, Mabl, Functionize, Katalon, Applitools (each emphasizes different
+  mix of AI, self-heal, and visual). Differentiator: video-first generation for
+  non-technical users.
+
+--------------------------------------------------------------------------------
+12. SUMMARY
+--------------------------------------------------------------------------------
+
+  The platform is feasible with current models and Playwright. Invest in
+  a solid **video → structure** pipeline, **tight LLM contracts** for code,
+  a **reliable runner** (timeouts, retries, idempotency), and **issue/tool**
+  integrations for RFT. Start with a narrow MVP, measure cost per video, then
+  add automation and self-heal.
+
+================================================================================
+  END OF DOCUMENT
+================================================================================
