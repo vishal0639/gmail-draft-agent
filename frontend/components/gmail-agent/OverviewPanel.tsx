@@ -3,8 +3,10 @@
 import { useState } from "react";
 
 import { apiRequest } from "@/lib/api";
+import { clearStoredUserId } from "@/lib/sessionStorage";
 import type { GoogleAuthUrl } from "@/lib/types";
 import { setHealth } from "@/store/slices/overviewSlice";
+import { setUserId } from "@/store/slices/sessionSlice";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { useNotify } from "@/hooks/useNotify";
 
@@ -45,14 +47,20 @@ export function OverviewPanel() {
     }
   };
 
+  const clearKey = () => {
+    clearStoredUserId();
+    dispatch(setUserId(""));
+    dispatch(setHealth(null));
+    toast("Account key removed from this browser.");
+  };
+
   return (
     <div className="grid gap-6 lg:grid-cols-5">
       <section className={`${card} lg:col-span-3`}>
         <h2 className="text-lg font-medium text-zinc-100">Connect Gmail</h2>
         <p className="mt-2 text-sm leading-relaxed text-zinc-400">
           We use Google&apos;s sign-in. When you finish in the other tab, your <strong className="text-zinc-300">account key</strong> is saved on this
-          device automatically — nothing to paste here. If something didn&apos;t sync, add the key manually under{" "}
-          <strong className="text-zinc-300">Settings</strong>.
+          device automatically — nothing to paste here. If something didn&apos;t sync, remove the key and sign in again.
         </p>
         <div className="mt-5 flex flex-wrap gap-3">
           <button type="button" onClick={getAuthUrl} className={btnPrimary}>
@@ -61,9 +69,14 @@ export function OverviewPanel() {
           <button type="button" onClick={checkGmail} className={btnSecondary}>
             Test connection
           </button>
+          {userId ? (
+            <button type="button" onClick={clearKey} className={btnSecondary}>
+              Remove account key
+            </button>
+          ) : null}
         </div>
         {userId ? (
-          <p className="mt-4 text-sm text-emerald-400/90">This browser has an account key saved — use Test connection to verify Gmail access.</p>
+        <p className="mt-4 text-sm text-emerald-400/90">This browser has an account key saved — use Test connection to verify Gmail access.</p>
         ) : null}
         {oauthFallbackUrl && (
           <div className="mt-5 rounded-xl border border-amber-900/40 bg-amber-950/20 p-4">
@@ -77,7 +90,7 @@ export function OverviewPanel() {
               {oauthFallbackUrl}
             </a>
             <p className="mt-3 text-xs text-amber-200/70">
-              If this page doesn&apos;t update after sign-in, paste your account key under Settings.
+              If this page doesn&apos;t update after sign-in, refresh the page.
             </p>
           </div>
         )}
