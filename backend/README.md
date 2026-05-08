@@ -2,7 +2,7 @@
 
 Python (FastAPI) backend for the **Airtribe / Draftly** case study: **OAuth2** to Google, **Gmail** read (unread/recent) and **send** (only after **approval**), **OpenAI-powered** reply drafts when `OPENAI_API_KEY` is set (otherwise a **mock** draft for local dev), **encrypted** tokens and **preferences** at rest, **idempotent** sends with **retries** on transient Gmail errors, and **audit** logging.
 
-> Scope matches the case-study images in `../images/`: connect Gmail, list messages, create/manage drafts, human-in-the-loop, send with threading, logs, and failure handling. The files `gmail.txt` / `gmail-summary.txt` in the repo describe a different (QA) concept—this backend implements the **Gmail** brief only.
+> Scope matches the case-study brief: connect Gmail, list messages, create/manage drafts, human-in-the-loop, send with threading, logs, and failure handling. The files `gmail.txt` / `gmail-summary.txt` in the repo describe a different (QA) concept—this backend implements the **Gmail** brief only.
 
 ---
 
