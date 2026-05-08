@@ -103,7 +103,10 @@ export default function GMailAgentApp() {
       {tab === "drafts" && <DraftsPanel />}
       {/* {tab === "settings" && <SettingsPanel />} */}
       <footer className="mt-20 border-t border-zinc-800/80 pt-8 text-center text-xs text-zinc-600">
-        GMailAgent · local control for Gmail reply drafts
+        <div className="space-y-1">
+          <div className="text-zinc-500">© {2026} Vishal M</div>
+          <div className="text-zinc-600">AI-assisted Gmail reply drafts — review, approve, then send.</div>
+        </div>
       </footer>
     </div>
   );
