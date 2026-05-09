@@ -156,3 +156,99 @@ def get_message_full(service, message_id: str) -> dict:
         .execute()
     )
     return parse_gmail_message_resource(full)
+
+
+def get_account_email(service) -> str:
+    """Authenticated mailbox address (for telling our messages from the correspondent's)."""
+    return (get_user_profile(service).get("emailAddress") or "").strip().lower()
+
+
+def _email_from_from_header(from_addr: str | None) -> str:
+    if not from_addr:
+        return ""
+    s = from_addr.strip()
+    if "<" in s and ">" in s:
+        return s.split("<", 1)[1].split(">", 1)[0].strip().lower()
+    return s.lower()
+
+
+def collect_correspondent_thread_messages(
+    service,
+    *,
+    thread_id: str | None,
+    correspondent_email: str,
+    max_messages: int = 20,
+    max_chars: int = 900,
+) -> list[str]:
+    """Chronological plain-text excerpts from the correspondent in this thread only."""
+    if not thread_id or not correspondent_email:
+        return []
+    them = correspondent_email.strip().lower()
+    try:
+        thr = (
+            service.users()
+            .threads()
+            .get(userId="me", id=thread_id, format="full")
+            .execute()
+        )
+    except HttpError:
+        return []
+    msgs = sorted(
+        thr.get("messages") or [],
+        key=lambda m: int(m.get("internalDate") or 0),
+    )
+    if len(msgs) > max_messages:
+        msgs = msgs[-max_messages:]
+    out: list[str] = []
+    for m in msgs:
+        try:
+            p = parse_gmail_message_resource(m)
+        except Exception:
+            continue
+        em = _email_from_from_header(p.get("from_addr"))
+        if em != them:
+            continue
+        chunk = (p.get("body_text") or p.get("snippet") or "").strip()
+        if chunk:
+            out.append(chunk[:max_chars])
+    return out
+
+
+def fetch_recent_incoming_from_address(
+    service,
+    *,
+    correspondent_email: str,
+    max_results: int = 6,
+    max_chars: int = 600,
+) -> list[str]:
+    """Additional snippets from this sender (any thread) for style inference."""
+    addr = (correspondent_email or "").strip()
+    if "@" not in addr:
+        return []
+    q = f"from:{addr} newer_than:365d"
+    try:
+        res = (
+            service.users()
+            .messages()
+            .list(userId="me", maxResults=max_results, q=q)
+            .execute()
+        )
+    except HttpError:
+        return []
+    mids = [m["id"] for m in (res.get("messages") or [])]
+    out: list[str] = []
+    for mid in mids:
+        try:
+            full = (
+                service.users()
+                .messages()
+                .get(userId="me", id=mid, format="full")
+                .execute()
+            )
+            p = parse_gmail_message_resource(full)
+        except HttpError:
+            continue
+        chunk = (p.get("body_text") or p.get("snippet") or "").strip()
+        if chunk:
+            out.append(chunk[:max_chars])
+    return out
