@@ -5,7 +5,13 @@ from sqlalchemy.orm import Session
 
 from app.db import models
 from app.schemas.draft import DraftGenerateRequest, ToneKind
-from app.services import auth_service, gmail_data, llm_reply, preferences_service
+from app.services import (
+    auth_service,
+    correspondent_style,
+    gmail_data,
+    llm_reply,
+    preferences_service,
+)
 
 # Pending: 24h from creation. After approve: must send by 48h from original creation.
 # Rejected: removed 24h after dismissal.
@@ -28,6 +34,42 @@ def generate_draft(
     tone = (req.tone or ToneKind.CONCISE).value
     snippet = p.get("body_text") or p.get("snippet") or ""
     subj = p.get("subject") or ""
+    corr_email = _reply_to(p.get("from_addr"))
+    thread_excerpts = gmail_data.collect_correspondent_thread_messages(
+        service,
+        thread_id=p.get("thread_id"),
+        correspondent_email=corr_email,
+    )
+    extra = []
+    if len(thread_excerpts) < 2 and corr_email:
+        extra = gmail_data.fetch_recent_incoming_from_address(
+            service, correspondent_email=corr_email
+        )
+    seen: set[str] = set()
+    merged_hist: list[str] = []
+    for t in thread_excerpts + extra:
+        key = (t or "")[:100]
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged_hist.append(t)
+    merged_hist = merged_hist[:12]
+    first_name = correspondent_style.display_first_name_from_from_header(p.get("from_addr"))
+    relationship = correspondent_style.infer_relationship_style(
+        correspondent_email=corr_email,
+        their_texts=merged_hist,
+        latest_incoming=snippet,
+    )
+    blend = correspondent_style.build_tone_blend_instruction(
+        user_tone=tone, relationship=relationship
+    )
+    prior_for_prompt: list[str] = []
+    for t in merged_hist:
+        a, b = (t or "").strip()[:500], (snippet or "").strip()[:500]
+        if a and b and (a == b or (len(a) > 40 and a in b) or (len(b) > 40 and b in a)):
+            continue
+        prior_for_prompt.append(t)
+    prior_for_prompt = prior_for_prompt[-6:]
     style_hints = gmail_data.fetch_recent_sent_style_snippets(service, max_messages=3)
     body = llm_reply.generate_reply_draft(
         from_addr=p.get("from_addr"),
@@ -37,6 +79,10 @@ def generate_draft(
         signature=sig,
         custom_instructions=req.custom_instructions,
         style_examples=style_hints,
+        correspondent_first_name=first_name,
+        relationship_style=relationship,
+        tone_blend_instruction=blend,
+        correspondent_history=prior_for_prompt,
     )
     subj_out = subj
     if subj_out and not subj_out.lower().strip().startswith("re:"):

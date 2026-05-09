@@ -23,6 +23,10 @@ def generate_reply_draft(
     signature: str,
     custom_instructions: str | None,
     style_examples: Sequence[str] | None,
+    correspondent_first_name: str | None = None,
+    relationship_style: str = "professional",
+    tone_blend_instruction: str = "",
+    correspondent_history: Sequence[str] | None = None,
 ) -> str:
     settings = get_settings()
     key = (settings.openai_api_key or "").strip()
@@ -33,6 +37,8 @@ def generate_reply_draft(
             subject=subject or "",
             tone=tone,
             signature=signature,
+            correspondent_first_name=correspondent_first_name,
+            relationship_style=relationship_style,
         )
     try:
         return _openai_generate(
@@ -45,6 +51,10 @@ def generate_reply_draft(
             signature=signature.strip(),
             custom_instructions=(custom_instructions or "").strip(),
             style_examples=list(style_examples or []),
+            correspondent_first_name=correspondent_first_name,
+            relationship_style=relationship_style,
+            tone_blend_instruction=(tone_blend_instruction or "").strip(),
+            correspondent_history=list(correspondent_history or []),
         )
     except Exception:
         _log.exception("OpenAI draft generation failed")
@@ -62,6 +72,10 @@ def _openai_generate(
     signature: str,
     custom_instructions: str,
     style_examples: list[str],
+    correspondent_first_name: str | None,
+    relationship_style: str,
+    tone_blend_instruction: str,
+    correspondent_history: list[str],
 ) -> str:
     from openai import OpenAI
 
@@ -74,19 +88,44 @@ def _openai_generate(
         "write a normal reply as a real person would. "
         "Respond appropriately to the correspondent's message. "
         "Do not invent facts, meetings, or commitments not supported by the thread. "
-        "Tone: formal = polite and structured; concise = brief and direct; friendly = warm but professional."
+        "Infer rapport from the samples: if they write casually, you may use hi + first name and light closings; "
+        "if the thread is professional or from automated senders, stay businesslike. "
+        "Tone knobs: formal = polite and structured; concise = brief and direct; friendly = warm. "
+        "When instructions say the relationship is casual but the user asked for concise, be short AND warm, not stiff."
     )
 
-    parts: list[str] = [
-        "### Email you are replying to",
-        f"From (correspondent): {from_addr}",
-        f"Subject: {subject}",
-        "",
-        "### Their message / thread body",
-        body_text if body_text else "(no body text — use subject and snippet context only)",
-        "",
-        f"### Requested reply tone: {tone}",
-    ]
+    parts: list[str] = []
+    if correspondent_history:
+        parts.append("### Earlier messages from this correspondent (match their style; do not quote verbatim)")
+        for i, ex in enumerate(correspondent_history[:6], 1):
+            parts.append(f"--- Prior {i} ---\n{ex[:1000]}")
+        parts.append("")
+    parts.extend(
+        [
+            "### Email you are replying to",
+            f"From (correspondent): {from_addr}",
+            f"Subject: {subject}",
+        ]
+    )
+    if correspondent_first_name:
+        parts.append(f"Correspondent first name (for greetings): {correspondent_first_name}")
+    parts.extend(
+        [
+            "",
+            "### Their message / thread body",
+            body_text if body_text else "(no body text — use subject and snippet context only)",
+            "",
+            f"### Inferred relationship style: {relationship_style}",
+        ]
+    )
+    if tone_blend_instruction:
+        parts.extend(["", "### How to blend tone", tone_blend_instruction])
+    parts.extend(
+        [
+            "",
+            f"### Requested reply tone (user control): {tone}",
+        ]
+    )
     if custom_instructions:
         parts.extend(["", "### Extra instructions from the user", custom_instructions])
     if signature:
