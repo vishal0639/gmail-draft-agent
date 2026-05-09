@@ -1,1 +1,202 @@
-AI-Powered Gmail Reply Agent — Feasibility & Architecture Yes, this is feasible. Gmail exposes stable APIs, OAuth2 is well understood, and OpenRouter (or a single provider) can cover GPT / Claude / Gemini with one client. A bootcamp-size MVP is realistic if you cap scope: one user, drafts only, Postgres (or SQLite), and rule-based + LLM classification. Feasibility assessment Area Verdict Notes Read & thread context Highly feasible threads.get + users.messages with format=full Drafts (no auto-send) Highly feasible drafts.create with proper MIME; aligns with your spec Style learning Feasible (bounded) Last N Sent messages + prompt snippets; optional small embedding store later OpenRouter (multi-LLM) Feasible Single HTTP API; model string switches provider Confidence score Feasible Ask LLM for a number; optional second pass for “calibration” OTP / no-reply / alerts Feasible Rules first (fast); LLM assist optional Send + threading Feasible (extra time) Requires send scope, headers; often phase 2 Challenges to plan for Token & scope lifecycle (refresh, revoke, expiry) Gmail rate limits and quotas (backoff, batching) Long threads (truncate + optional summarization) False confidence (always allow human review; store “needs review” in DB) High-level architecture flow ┌─────────────────────────────────────────────────────────────────────────────┐ │ CLIENT LAYER (pick one for MVP) │ │ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ │ │ │ Web UI │ │ CLI │ │ Cron/Worker │ │ Browser Ext │ │ │ │ (optional) │ │ (optional) │ │ (optional) │ │ (optional) │ │ │ └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘ │ └─────────────────────────────────────────────────────────────────────────────┘ │ ▼ ┌─────────────────────────────────────────────────────────────────────────────┐ │ API & AUTH LAYER (REST) │ │ Google OAuth2 → App session / JWT → RBAC (single user in MVP) │ └─────────────────────────────────────────────────────────────────────────────┘ │ ┌─────────────────────────────┼─────────────────────────────┐ ▼ ▼ ▼ ┌───────────────┐ ┌───────────────┐ ┌───────────────┐ │ Gmail │ │ Ingestion │ │ LLM Gateway │ │ Adapter │ │ & History │ │ (OpenRouter) │ │ list/read/ │ │ sync job │ │ model param │ │ drafts.create │ │ (optional) │ │ confidence │ └───────────────┘ └───────────────┘ └───────────────┘ │ │ │ └─────────────────────────────┼─────────────────────────────┘ ▼ ┌─────────────────────────────────────────────────────────────────────────────┐ │ CONTEXT, STYLE, CLASSIFICATION ENGINE │ │ Thread assembly → PII/OTP/No-reply filter → Style snippets → Prompt build │ │ (Optional) Long thread summarization → RAG/embedding (phase 2) │ └─────────────────────────────────────────────────────────────────────────────┘ │ ▼ ┌─────────────────────────────────────────────────────────────────────────────┐ │ DRAFT ORCHESTRATION & CONFIDENCE GATE │ │ If confidence >= 80 → create/refresh Gmail DRAFT + mark status │ │ Else → mark “Needs review” (and optional no draft) │ │ Idempotency keys on generate; retries with backoff (Gmail/LLM) │ └─────────────────────────────────────────────────────────────────────────────┘ │ ▼ ┌─────────────────────────────────────────────────────────────────────────────┐ │ PERSISTENCE, LOGGING, OBSERVABILITY │ │ PostgreSQL (or SQLite) : users, tokens (encrypted), threads, messages, │ │ drafts, jobs, audit_log │ └─────────────────────────────────────────────────────────────────────────────┘ Detailed component breakdown 1) Gmail integration layer Piece Function Key APIs / behavior OAuth2 Get refresh token; re-login on revoke Google OAuth; encrypt at rest Inbox / thread read Sender, subject, body, time, threadId users.messages, users.threads Sent mail (style) Last N sent for tone/greeting q=in:sent + maxResults cap Drafts Never auto-send in your spec drafts.create with thread id / RFC 822 message (Optional) Send Approve then send, threaded users.messages.send + In-Reply-To / References Processing flow (read path) Poll or history sync → fetch thread messages → normalize plain text + metadata → store in DB 2) Thread understanding & context builder Step What it does Order Sort by internal date; build chronological transcript Window If too long: keep last K messages and/or call summarizer (optional) Gaps (Optional) pass “days since last message” into prompt for tone Output Single context_pack for the LLM: thread text + your instructions 3) Classifier: “no response needed” Category How (MVP) OTP / 2FA Subject/body keywords + 4–8 digit pattern no-reply / noreply From address + List-Unsubscribe heuristics Transactional ORDER, receipt, shipment keywords (tune) Result Skip LLM; label as “No response needed” in DB 4) Style learning (lightweight MVP) Data Extraction Use in prompt Last 10–30 sent Pull bodies Few-shot: “user writes like this: …” Greeting/close Simple heuristics or LLM extract Instructions Tone formal/informal guess tone: formal Phase 2: embeddings in pgvector for “closest past reply style.” 5) LLM gateway (OpenRouter) Item Design Models Config: openai/..., anthropic/..., google/... (exact ids from OpenRouter) Output contract JSON: reply, confidence (0–100), language, needs_style_review (optional) Multi-LLM One client; model from user prefs or per request 6) Draft orchestration & confidence gate Rule Action confidence >= 80 Create/update Gmail draft + DB status=ready confidence < 80 DB status=needs_review (with or without draft) Idempotency Same threadId + generation_id (or Idempotency-Key) → no duplicate work Retries 429/5xx on Gmail/HTTP: exponential backoff, max attempts, log to audit_log End-to-end user flows (three flows like your template) Flow A: Sync email → generate draft (your core demo) User completes OAuth. (Manual or scheduled) sync loads recent threads/messages. For each eligible message: build context + style. Classifier; if no-response → stop. OpenRouter returns reply + confidence. If ≥ 80% → Gmail draft; else → needs review in app DB. Log: model, tokens (if returned), status. Flow B: Human in the loop (if you add a UI) GET /drafts?status=needs_review PATCH /drafts/:id (edit body) Optional: “Approve” → (Phase 2) send with threading Flow C: Failure & token health If refresh fails → GET /gmail/status red; user re-auth. If LLM down → mark job failed, surface message; do not partial-send. Suggested technology stack (aligned to your spec) Layer Technology Why Backend Node (Nest/Express) or Python (FastAPI) Gmail libs + speed for MVP Gmail googleapis (Node) or official Python client Same REST under the hood LLM OpenRouter (one key, many models) Matches your requirement DB Postgres (or SQLite for fastest demo) Relational + optional pgvector Encryption App-level AES for refresh tokens; envelope with env MASTER_KEY Meets “encrypt stored tokens” in brief Jobs (optional) In-process queue or bullmq / Celery Retries, backoff Container Docker + docker-compose for submission Matches deliverable ask Frontend (optional for MVP): any minimal stack (Vite+React) or even no UI + good README for Postman. AI / processing pipeline (compact) ┌────────────────────────────────────────────────────────────┐ │ Stage 1: Fetch + normalize (Gmail → plain text + metadata)│ └────────────────────────────┬───────────────────────────────┘ ▼ ┌────────────────────────────────────────────────────────────┐ │ Stage 2: Classify (rules + optional small LLM) │ │ → No response / continue │ └────────────────────────────┬───────────────────────────────┘ ▼ ┌────────────────────────────┬───────────────────────────────┐ │ Stage 3a: (Optional) │ Stage 3b: Build prompt │ │ Thread summary (long only) │ + user style from Sent │ └────────────────────────────┴───────────────┬───────────────┘ ▼ ┌────────────────────────────────────────────────────────────┐ │ Stage 4: OpenRouter → reply + confidence (JSON) │ └────────────────────────────┬───────────────────────────────┘ ▼ ┌────────────────────────────────────────────────────────────┐ │ Stage 5: Gate + Gmail draft + persist + logs │ └────────────────────────────────────────────────────────────┘ Database schema (core — MVP) -- users (app identity) CREATE TABLE users ( id UUID PRIMARY KEY, email TEXT UNIQUE, created_at TIMESTAMPTZ DEFAULT NOW() ); -- tokens: encrypt refresh_token and sensitive fields in app CREATE TABLE gmail_connections ( user_id UUID PRIMARY KEY REFERENCES users(id), enc_refresh_token BYTEA NOT NULL, token_meta JSONB, revoked_at TIMESTAMPTZ, updated_at TIMESTAMPTZ DEFAULT NOW() ); -- optional sync state CREATE TABLE sync_state ( user_id UUID PRIMARY KEY REFERENCES users(id), last_history_id TEXT, last_synced_at TIMESTAMPTZ ); CREATE TABLE threads ( id UUID PRIMARY KEY, user_id UUID NOT NULL REFERENCES users(id), gmail_thread_id TEXT NOT NULL, last_message_at TIMESTAMPTZ, UNIQUE (user_id, gmail_thread_id) ); CREATE TABLE messages ( id UUID PRIMARY KEY, thread_id UUID NOT NULL REFERENCES threads(id) ON DELETE CASCADE, gmail_message_id TEXT NOT NULL, "from" TEXT, subject TEXT, body_text TEXT, received_at TIMESTAMPTZ, classification TEXT -- 'ok_to_reply' | 'no_response' | ... ); CREATE TABLE draft_artifacts ( id UUID PRIMARY KEY, user_id UUID NOT NULL REFERENCES users(id), thread_id UUID NOT NULL REFERENCES threads(id), model TEXT NOT NULL, -- OpenRouter model id body TEXT NOT NULL, confidence INT NOT NULL CHECK (confidence >= 0 AND confidence <= 100), status TEXT NOT NULL, -- 'ready' | 'needs_review' | 'dismissed' gmail_draft_id TEXT, -- if created in Gmail idempotency_key TEXT, created_at TIMESTAMPTZ DEFAULT NOW() ); CREATE TABLE audit_log ( id BIGSERIAL PRIMARY KEY, user_id UUID, event TEXT, details JSONB, created_at TIMESTAMPTZ DEFAULT NOW() ); (Add indexes on (user_id, gmail_thread_id), (thread_id, received_at), draft_artifacts(user_id, status).) REST API sketch (MVP) Method Path Purpose GET /health Liveness GET /auth/google Start OAuth (if you expose web) GET /auth/google/callback Code exchange, store token POST /gmail/sync Pull recent threads GET /threads List with filters GET /threads/:gmailThreadId Messages in order POST /threads/:gmailThreadId/drafts Idempotent generate GET /drafts List by status PATCH /drafts/:id Edit (optional) POST /auth/revoke Logout / revoke (brief requirement) Time estimates (single-thread path) Step Time (typical) OAuth + first message fetch 5–20 min (dev setup dominates) One OpenRouter call end-to-end 2–20 s (model + size) drafts.create 0.5–3 s Full “sync 20 threads + generate 1” 30 s–5 min (quotas, pagination) Rough cost view (MVP, low volume) Item Note Gmail API Free tier with quotas; watch users/quota in Cloud Console OpenRouter Pay per token; switch models in config to control cost Hosting $0–25/mo (small VM or free trial) for demo Postgres 0 ( D o c k e r l o c a l ) t o 0(Dockerlocal)to 20/mo (managed) Order of magnitude: a few cents to a few dollars for a demo week if you avoid huge threads and use mid-tier models. Implementation phases (aligned to a tight deadline) Phase What you deliver Phase 1 — MVP (days) OAuth, read 1+ threads, OpenRouter JSON reply + confidence, Gmail draft if ≥80, DB for drafts, basic classifier Phase 2 Full sync, needs_review UI or CLI, idempotency + retries, encrypted tokens Phase 3 (optional) Approve + send with threading; summarization; multi-suggestion; pgvector for style RAG Phase 4 (optional) Production hardening, rate limit dashboards, cost caps Key challenges & mitigations Challenge Mitigation Over-long threads Truncate; optional summary message in prompt Wrong language Ask LLM to detect language; mirror in instructions Shaky confidence Always show in UI/CLI; don’t auto-send (drafts only) Duplicate drafts Idempotency + “last draft for thread” policy Token expiry Refresh; clear UX on re-link Gmail 429/403 Backoff; reduce batch size; respect scope “Alternative” architecture (one paragraph for your report) Alternative A — Serverless (Lambda/Cloud Run) + event bridge for periodic sync. Pros: scale, pay-per-use. Cons: cold starts, OAuth state trickier, more moving parts for a bootcamp deadline. Alternative B — All-in-one container (modular monolith) + cron. Pros: one deploy, one README, best for your submission. Cons: vertical scale only (fine for MVP). Recommendation for submission: modular monolith + Docker Compose. Deliverables (match the brief you shared) Working app (at least local/Docker) Public GitHub link (when policy allows) README: setup, env vars, API list, design trade-offs Video: OAuth → one thread → draft in Gmail (or in DB) with confidence line Summary (one paragraph) The Gmail AI Reply Agent is highly feasible with Gmail API + OpenRouter, a small relational schema, a clear draft-only policy, a classifier for no-reply/OTP mail, a simple style block from Sent mail, and a confidence gate that drives whether you create a Gmail draft or mark for review. Scope control (one user, drafts not sends, rules before heavy LLM) is what makes a strong bootcamp delivery on time possible. You can paste this into Notion, Google Doc, or your capstone report as-is. If you want, next turn can be only a 1-page HLD diagram in Mermaid (still no code) for slides. (No project repo was analyzed for this answer.)
+AI-Powered Gmail Reply Agent — Feasibility & Architecture
+Yes, this is feasible. Gmail exposes stable APIs, OAuth2 is well understood, and OpenRouter (or a single provider) can cover GPT / Claude / Gemini with one client. A bootcamp-size MVP is realistic if you cap scope: one user, drafts only, Postgres (or SQLite), and rule-based + LLM classification.
+
+Feasibility Assessment
+Read & thread context: Highly feasible threads.get + users.messages with format=full
+Drafts (no auto-send): Highly feasible drafts.create with proper MIME; aligns with your spec
+Style learning: Feasible (bounded) Last N Sent messages + prompt snippets; optional small embedding store later
+OpenRouter (multi-LLM): Feasible Single HTTP API; model string switches provider
+Confidence score: Feasible Ask LLM for a number; optional second pass for “calibration”
+OTP / no-reply / alerts: Feasible Rules first (fast); LLM assist optional
+Send + threading: Feasible (extra time) Requires send scope, headers; often phase 2
+Challenges to Plan For
+Token & scope lifecycle (refresh, revoke, expiry)
+Gmail rate limits and quotas (backoff, batching)
+Long threads (truncate + optional summarization)
+False confidence (always allow human review; store “needs review” in DB)
+High-Level Architecture Flow
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ CLIENT LAYER (pick one for MVP) │
+│ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ │
+│ │ Web UI │ │ CLI │ │ Cron/Worker │ │ Browser Ext │ │
+│ │ (optional) │ │ (optional) │ │ (optional) │ │ (optional) │ │
+│ └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘ │
+│ └─────────────────────────────────────────────────────────────────────────────┘
+│ ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ API & AUTH LAYER (REST) │
+│ Google OAuth2 → App session / JWT → RBAC (single user in MVP) │
+└─────────────────────────────────────────────────────────────────────────────┘
+│ ┌─────────────────────────────┼─────────────────────────────┐
+▼ ▼ ▼
+┌───────────────┐ ┌───────────────┐ ┌───────────────┐
+│ Gmail │ │ Ingestion │ │ LLM Gateway │
+│ & History │ │ (OpenRouter) │ │ Adapter │
+│ list/read/ │ │ sync job │ │ model param │
+│ drafts.create │ │ (optional) │ │ confidence │
+└───────────────┘ └───────────────┘ └───────────────┘
+│ │ │
+└─────────────────────────────┼─────────────────────────────┘
+▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ CONTEXT, STYLE, CLASSIFICATION ENGINE │
+│ Thread assembly → PII/OTP/No-reply filter → Style snippets → Prompt build │
+│ (Optional) Long thread summarization → RAG/embedding (phase 2) │
+└─────────────────────────────────────────────────────────────────────────────┘
+│ ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ DRAFT ORCHESTRATION & CONFIDENCE GATE │
+│ If confidence >= 80 → create/refresh Gmail DRAFT + mark status │
+│ Else → mark “Needs review” (and optional no draft) │
+│ Idempotency keys on generate; retries with backoff (Gmail/LLM) │
+└─────────────────────────────────────────────────────────────────────────────┘
+│ ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ PERSISTENCE, LOGGING, OBSERVABILITY │
+│ PostgreSQL (or SQLite): users, tokens (encrypted), threads, messages, │
+│ drafts, jobs, audit_log │
+└─────────────────────────────────────────────────────────────────────────────┘
+Detailed Component Breakdown
+Gmail integration layer
+Piece Function Key APIs / behavior
+OAuth2 Get refresh token; re-login on revoke Google OAuth; encrypt at rest
+Inbox / thread read Sender, subject, body, time, threadId users.messages, users.threads
+Sent mail (style) Last N sent for tone/greeting q=in:sent + maxResults cap
+Drafts Never auto-send in your spec drafts.create with thread id / RFC 822 message
+(Optional) Send Approve then send, threaded users.messages.send + In-Reply-To / References
+Processing flow (read path) Poll or history sync → fetch thread messages → normalize plain text + metadata → store in DB
+Thread understanding & context builder
+Step What it does
+Order Sort by internal date; build chronological transcript
+Window If too long: keep last K messages and/or call summarizer (optional)
+Gaps (Optional) pass “days since last message” into prompt for tone
+Output Single context_pack for the LLM: thread text + your instructions
+Classifier: “no response needed”
+Category How (MVP)
+OTP / 2FA Subject/body keywords + 4–8 digit pattern
+no-reply / noreply From address + List-Unsubscribe heuristics
+Transactional ORDER, receipt, shipment keywords (tune)
+Result Skip LLM; label as “No response needed” in DB
+Style learning (lightweight MVP)
+Data Extraction Use in prompt Last 10–30 sent Pull bodies
+Few-shot: “user writes like this: …”
+Greeting/close Simple heuristics or LLM extract
+Instructions Tone formal/informal guess tone: formal
+Phase 2: embeddings in pgvector for “closest past reply style.”
+LLM gateway (OpenRouter)
+Item Design Models Config: openai/..., anthropic/..., google/... (exact ids from OpenRouter)
+Output contract JSON: reply, confidence (0–100), language, needs_style_review (optional)
+Multi-LLM One client; model from user prefs or per request
+Draft orchestration & confidence gate
+Rule Action
+confidence >= 80 Create/update Gmail draft + DB status=ready
+confidence < 80 DB status=needs_review (with or without draft)
+Idempotency Same threadId + generation_id (or Idempotency-Key) → no duplicate work
+Retries 429/5xx on Gmail/HTTP: exponential backoff, max attempts, log to audit_log
+End-to-End User Flows
+Flow A: Sync email → generate draft (your core demo)
+User completes OAuth. (Manual or scheduled) sync loads recent threads/messages. For each eligible message: build context + style. Classifier; if no-response → stop. OpenRouter returns reply + confidence. If ≥ 80% → Gmail draft; else → needs review in app DB. Log: model, tokens (if returned), status.
+Flow B: Human in the loop (if you add a UI)
+GET /drafts?status=needs_review
+PATCH /drafts/:id (edit body)
+Optional: “Approve” → (Phase 2) send with threading
+Flow C: Failure & token health
+If refresh fails → GET /gmail/status red; user re-auth.
+If LLM down → mark job failed, surface message; do not partial-send.
+Suggested Technology Stack
+Backend: Node (Nest/Express) or Python (FastAPI) Gmail libs + speed for MVP
+Gmail: googleapis (Node) or official Python client Same REST under the hood
+LLM: OpenRouter (one key, many models) Matches your requirement
+DB: Postgres (or SQLite for fastest demo) Relational + optional pgvector
+Encryption: App-level AES for refresh tokens; envelope with env MASTER_KEY Meets “encrypt stored tokens” in brief
+Jobs (optional): In-process queue or bullmq / Celery Retries, backoff
+Container: Docker + docker-compose for submission Matches deliverable ask
+Frontend (optional for MVP): any minimal stack (Vite+React) or even no UI + good README for Postman.
+AI / Processing Pipeline (Compact)
+┌────────────────────────────────────────────────────────────┐
+│ Stage 1: Fetch + normalize (Gmail → plain text + metadata)│
+└────────────────────────────┬───────────────────────────────┘
+▼
+┌────────────────────────────────────────────────────────────┐
+│ Stage 2: Classify (rules + optional small LLM) │
+│ → No response / continue │
+└────────────────────────────┬───────────────────────────────┘
+▼
+┌────────────────────────────┬───────────────────────────────┐
+│ Stage 3a: (Optional) │ Stage 3b: Build prompt │
+│ Thread summary (long only) │ + user style from Sent │
+└────────────────────────────┴───────────────┬───────────────┘
+▼
+┌────────────────────────────────────────────────────────────┐
+│ Stage 4: OpenRouter → reply + confidence (JSON) │
+└────────────────────────────┬───────────────────────────────┘
+▼
+┌────────────────────────────────────────────────────────────┐
+│ Stage 5: Gate + Gmail draft + persist + logs │
+└────────────────────────────────────────────────────────────┘
+Database Schema (Core — MVP)
+-- users (app identity)
+CREATE TABLE users ( id UUID PRIMARY KEY, email TEXT UNIQUE, created_at TIMESTAMPTZ DEFAULT NOW() );
+-- tokens: encrypt refresh_token and sensitive fields in app
+CREATE TABLE gmail_connections ( user_id UUID PRIMARY KEY REFERENCES users(id), enc_refresh_token BYTEA NOT NULL, token_meta JSONB, revoked_at TIMESTAMPTZ, updated_at TIMESTAMPTZ DEFAULT NOW() );
+-- optional sync state
+CREATE TABLE sync_state ( user_id UUID PRIMARY KEY REFERENCES users(id), last_history_id TEXT, last_synced_at TIMESTAMPTZ );
+CREATE TABLE threads ( id UUID PRIMARY KEY, user_id UUID NOT NULL REFERENCES users(id), gmail_thread_id TEXT NOT NULL, last_message_at TIMESTAMPTZ, UNIQUE (user_id, gmail_thread_id) );
+CREATE TABLE messages ( id UUID PRIMARY KEY, thread_id UUID NOT NULL REFERENCES threads(id) ON DELETE CASCADE, gmail_message_id TEXT NOT NULL, "from" TEXT, subject TEXT, body_text TEXT, received_at TIMESTAMPTZ, classification TEXT -- 'ok_to_reply' | 'no_response' | ... );
+CREATE TABLE draft_artifacts ( id UUID PRIMARY KEY, user_id UUID NOT NULL REFERENCES users(id), thread_id UUID NOT NULL REFERENCES threads(id), model TEXT NOT NULL, -- OpenRouter model id body TEXT NOT NULL, confidence INT NOT NULL CHECK (confidence >= 0 AND confidence <= 100), status TEXT NOT NULL, -- 'ready' | 'needs_review' | 'dismissed' gmail_draft_id TEXT, -- if created in Gmail idempotency_key TEXT, created_at TIMESTAMPTZ DEFAULT NOW() );
+CREATE TABLE audit_log ( id BIGSERIAL PRIMARY KEY, user_id UUID, event TEXT, details JSONB, created_at TIMESTAMPTZ DEFAULT NOW() );
+(Add indexes on (user_id, gmail_thread_id), (thread_id, received_at), draft_artifacts(user_id, status).)
+REST API Sketch (MVP)
+GET /health: Liveness
+GET /auth/google: Start OAuth (if you expose web)
+GET /auth/google/callback: Code exchange, store token
+POST /gmail/sync: Pull recent threads
+GET /threads: List with filters
+GET /threads/:gmailThreadId: Messages in order
+POST /threads/:gmailThreadId/drafts: Idempotent generate
+GET /drafts: List by status
+PATCH /drafts/:id: Edit (optional)
+POST /auth/revoke: Logout / revoke (brief requirement)
+Time Estimates (Single-Thread Path)
+OAuth + first message fetch: 5–20 min (dev setup dominates)
+One OpenRouter call end-to-end: 2–20 s (model + size)
+drafts.create: 0.5–3 s
+Full “sync 20 threads + generate 1”: 30 s–5 min (quotas, pagination)
+Rough Cost View (MVP, Low Volume)
+Item: Note
+Gmail API: Free tier with quotas; watch users/quota in Cloud Console
+OpenRouter: Pay per token; switch models in config to control cost
+Hosting: $0–25/mo (small VM or free trial) for demo
+Postgres: 0 (Docker local) to 20/mo (managed)
+Order of magnitude: a few cents to a few dollars for a demo week if you avoid huge threads and use mid-tier models.
+Implementation Phases (Aligned to a Tight Deadline)
+Phase 1 — MVP (days): OAuth, read 1+ threads, OpenRouter JSON reply + confidence, Gmail draft if ≥80, DB for drafts, basic classifier
+Phase 2: Full sync, needs_review UI or CLI, idempotency + retries, encrypted tokens
+Phase 3 (optional): Approve + send with threading; summarization; multi-suggestion; pgvector for style RAG
+Phase 4 (optional): Production hardening, rate limit dashboards, cost caps
+Key Challenges & Mitigations
+Challenge: Over-long threads
+Mitigation: Truncate; optional summary message in prompt
+Challenge: Wrong language
+Mitigation: Ask LLM to detect language; mirror in instructions
+Challenge: Shaky confidence
+Mitigation: Always show in UI/CLI; don’t auto-send (drafts only)
+Challenge: Duplicate drafts
+Mitigation: Idempotency + “last draft for thread” policy
+Challenge: Token expiry
+Mitigation: Refresh; clear UX on re-link Gmail
+Challenge: 429/403
+Mitigation: Backoff; reduce batch size; respect scope
+“Alternative” Architecture (One Paragraph for Your Report)
+Alternative A — Serverless (Lambda/Cloud Run) + event bridge for periodic sync. Pros: scale, pay-per-use. Cons: cold starts, OAuth state trickier, more moving parts for a bootcamp deadline. Alternative B — All-in-one container (modular monolith) + cron. Pros: one deploy, one README, best for your submission. Cons: vertical scale only (fine for MVP). Recommendation for submission: modular monolith + Docker Compose.
+
+Deliverables (Match the Brief You Shared)
+Working app (at least local/Docker)
+Public GitHub link (when policy allows)
+README: setup, env vars, API list, design trade-offs
+Video: OAuth → one thread → draft in Gmail (or in DB) with confidence line
+Summary (One Paragraph)
+The Gmail AI Reply Agent is highly feasible with Gmail API + OpenRouter, a small relational schema, a clear draft-only policy, a classifier for no-reply/OTP mail, a simple style block from Sent mail, and a confidence gate that drives whether you create a Gmail draft or mark for review. Scope control (one user, drafts not sends, rules before heavy LLM) is what makes a strong bootcamp delivery on time possible. You can paste this into Notion, Google Doc, or your capstone report as-is. If you want, next turn can be only a 1-page HLD diagram in Mermaid (still no code) for slides. (No project repo was analyzed for this answer.)
+
+
+Export
