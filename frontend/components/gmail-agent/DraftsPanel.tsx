@@ -51,7 +51,6 @@ export function DraftsPanel() {
   const list = useAppSelector((s) => s.drafts.list);
   const active = useAppSelector((s) => s.drafts.active);
   const bodyEd = useAppSelector((s) => s.drafts.bodyEd);
-  const idempotencyKey = useAppSelector((s) => s.drafts.idempotencyKey);
 
   const [approvedEditMode, setApprovedEditMode] = useState(false);
   const approvedBaselineRef = useRef<string>("");
@@ -180,16 +179,25 @@ export function DraftsPanel() {
     }
     try {
       withUser(userId);
-      const idem = idempotencyKey || crypto.randomUUID();
-      dispatch(setIdempotencyKey(idem));
-      await apiRequest("/replies/send", {
+      // New key every send. Reusing a key (e.g. from Redux after an earlier success) makes the API
+      // return idempotent success without calling Gmail again — UI looked "sent" but no new mail.
+      const idem = crypto.randomUUID();
+      dispatch(setIdempotencyKey(""));
+      const res = await apiRequest<{
+        idempotent?: boolean;
+        gmail_message_id?: string | null;
+      }>("/replies/send", {
         method: "POST",
         userId,
         apiBase,
         headers: { "Idempotency-Key": idem },
         body: JSON.stringify({ draft_id: active.id }),
       });
-      toast("Message sent.");
+      if (res?.idempotent) {
+        toast("No new email — this send was already completed with this idempotency key.");
+      } else {
+        toast("Message sent.");
+      }
       dispatch(setActiveDraft(null));
       await load();
     } catch (e) {
